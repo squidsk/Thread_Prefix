@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+
+<product productid="squid_thread_prefix" active="1">
+	<title>Squid: Change Thread Prefix Showthread</title>
+	<description>On showthread.php adds the ability to add/change/remove thread prefixes</description>
+	<version>1.0.0</version>
+	<url>http://www.vbulletin.org/forum/showthread.php?t=317487</url>
+	<versioncheckurl><![CDATA[http://www.vbulletin.org/forum/misc.php?do=productcheck&amp;pid=squid_thread_prefix]]></versioncheckurl>
+	<dependencies>
+		<dependency dependencytype="product" parentproductid="threadprefix_changeinline" minversion="2.2.0" maxversion="" />
+	</dependencies>
+	<codes>
+	</codes>
+	<templates>
+	</templates>
+	<stylevardfns>
+	</stylevardfns>
+	<stylevars>
+	</stylevars>
+	<plugins>
+		<plugin active="1" executionorder="5">
+			<title>Cache Templates</title>
+			<hookname>cache_templates</hookname>
+			<phpcode><![CDATA[if (THIS_SCRIPT == 'showthread')
+{
+	$cache[] = 'change_thread_prefix_inline';
+	$cache[] = 'remove_thread_prefix_inline';
+	$cache[] = 'thread_prefixset_inline';
+}]]></phpcode>
+		</plugin>
+		<plugin active="1" executionorder="5">
+			<title>ShowThread Inline Prefix</title>
+			<hookname>showthread_complete</hookname>
+			<phpcode><![CDATA[if (can_moderate($threadinfo['forumid']))
+{
+	require_once(DIR . '/includes/functions_prefix.php');
+	$prefixes_array = fetch_prefix_array($threadinfo['forumid']);
+
+	if(!empty($prefixes_array))
+	{
+		foreach ($prefixes_array as $prefixsetid => $prefix)
+		{
+			$prefixes = '';
+
+			foreach ($prefix as $prefixid => $prefix_array)
+			{
+				if($prefixid != $threadinfo['prefixid'])
+				{
+					$templater = vB_Template::create('change_thread_prefix_inline');
+					$templater->register('prefixid', $prefixid);
+					$templater->register('prefixtitle', $vbphrase['prefix_' . $prefixid . '_title_plain']);
+					$prefixes .= $templater->render();
+				}
+			}
+
+			if($prefixes != '') {
+				$templater = vB_Template::create('thread_prefixset_inline');
+				$templater->register('prefixsettitle', $vbphrase['prefixset_' . $prefixsetid . '_title']);
+				$templater->register('prefixes', $prefixes);
+				$template_hook['showthread_adminoptions'] .= $templater->render();
+			}
+		}
+
+		if ($threadinfo['prefixid'] != '' && !($foruminfo['options'] & $vbulletin->bf_misc_forumoptions['prefixrequired']))
+		{
+			$templater = vB_Template::create('remove_thread_prefix_inline');
+			$template_hook['showthread_adminoptions'] .= $templater->render();
+		}
+	}
+
+	unset($prefixes_array, $prefixsetid, $prefix, $prefixes, $prefixid, $prefix_array);
+}]]></phpcode>
+		</plugin>
+		<plugin active="1" executionorder="5">
+			<title>Postings Action Swtich</title>
+			<hookname>threadmanage_action_switch</hookname>
+			<phpcode><![CDATA[if  (strpos($_POST['do'], 'changeprefix_') !== false & strpos($_POST['do'], 'changeprefix_') == 0) 
+{ 
+	$newprefixid = str_replace('changeprefix_', '', $_POST['do']); 
+	$_POST['do'] = 'changeprefix'; 
+	$action = 'changed';
+	$handled_do = true;
+} else if(($_POST['do'] == 'removeprefix' && !($foruminfo['options'] & $vbulletin->bf_misc_forumoptions['prefixrequired']))) {
+	$newprefixid = ''; 
+	$action = 'removed';
+	$handled_do = true;
+}]]></phpcode>
+		</plugin>
+		<plugin active="1" executionorder="5">
+			<title>Change Thread Prefixes Postings</title>
+			<hookname>threadmanage_start</hookname>
+			<phpcode><![CDATA[if ($_POST['do'] == 'changeprefix' || $_POST['do'] == 'removeprefix') 
+{
+	$vbulletin->input->clean_array_gpc('p', array(
+		't' => TYPE_INT,
+	));
+
+	// Validate threads 
+	$thread = $db->query_first(" 
+		SELECT threadid, visible, forumid, postuserid, title 
+		FROM " . TABLE_PREFIX . "thread 
+		WHERE threadid = " . $vbulletin->GPC['t']);
+
+
+	if($thread) {
+		$forumperms = fetch_permissions($thread['forumid']); 
+		if(!($forumperms & $vbulletin->bf_ugp_forumpermissions['canview']) 
+			OR (!($forumperms & $vbulletin->bf_ugp_forumpermissions['canviewothers']) 
+				AND $thread['postuserid'] != $vbulletin->userinfo['userid']
+			)
+		)
+		{
+			eval(standard_error(fetch_error('invalidid', $vbphrase['thread'], $vbulletin->options['contactuslink'])));
+		}
+		if (!can_moderate($thread['forumid'])) 
+		{ 
+			eval(standard_error(fetch_error('you_do_not_have_permission_to_manage_threads_and_posts', '', $thread['title'], $vbulletin->forumcache["$thread[forumid]"]['title']))); 
+		}
+
+		$db->query_write(" 
+			UPDATE " . TABLE_PREFIX . "thread 
+			SET prefixid = '" . $db->escape_string($newprefixid) . "' 
+ 			WHERE threadid = " . $vbulletin->GPC['t']
+		); 
+
+		$modlog[] = array( 
+			'userid'   =>& $vbulletin->userinfo['userid'], 
+			'forumid'  =>& $thread['forumid'], 
+			'threadid' => $thread['threadid'], 
+		); 
+         
+        build_forum_counters($forumid, true); 
+        log_moderator_action($modlog, "{$action}_prefix"); 
+	} else {
+		eval(standard_error(fetch_error('invalidid', $vbphrase['thread'], $vbulletin->options['contactuslink'])));
+	}
+
+	eval(print_standard_redirect('redirect_inline_prefix_changed', true, $forceredirect)); 
+}]]></phpcode>
+		</plugin>
+	</plugins>
+	<phrases>
+	</phrases>
+	<options>
+	</options>
+	<helptopics>
+	</helptopics>
+	<cronentries>
+	</cronentries>
+	<faqentries>
+	</faqentries>
+	<navigation>
+	</navigation>
+</product>
